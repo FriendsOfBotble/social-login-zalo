@@ -7,6 +7,7 @@ use GuzzleHttp\RequestOptions;
 use Illuminate\Support\Arr;
 use Laravel\Socialite\Two\AbstractProvider;
 use Laravel\Socialite\Two\InvalidStateException;
+use Laravel\Socialite\Two\User;
 
 class ZaloProvider extends AbstractProvider
 {
@@ -37,9 +38,19 @@ class ZaloProvider extends AbstractProvider
         $response = $this->getAccessTokenResponse($this->getCode());
         $this->credentialsResponseBody = $response;
 
-        $this->user = $this->mapUserToObject($this->getUserByToken(
-            $token = Arr::get($response, 'access_token')
-        ));
+        $token = Arr::get($response, 'access_token');
+
+        if (! $token) {
+            throw new InvalidStateException('Invalid access token');
+        }
+
+        $zaloUser = $this->getUserByToken($token);
+
+        if (! $zaloUser || ! isset($zaloUser['id'])) {
+            throw new InvalidStateException('Cannot get user from Zalo API');
+        }
+
+        $this->user = $this->mapUserToObject($zaloUser);
 
         if ($this->user instanceof ZaloUser) {
             $this->user->setAccessTokenResponseBody($this->credentialsResponseBody);
@@ -51,7 +62,7 @@ class ZaloProvider extends AbstractProvider
             ->setExpiresIn(Arr::get($response, 'expires_in'));
     }
 
-    protected function getAuthUrl($state)
+    protected function getAuthUrl($state): string
     {
         return $this->buildAuthUrlFromBase('https://oauth.zaloapp.com/v4/permission', $state);
     }
@@ -80,7 +91,6 @@ class ZaloProvider extends AbstractProvider
         return 'https://oauth.zaloapp.com/v4/access_token';
     }
 
-
     protected function getUserByToken($token)
     {
         $response = $this->getHttpClient()->get('https://graph.zalo.me/v2.0/me', [
@@ -91,7 +101,7 @@ class ZaloProvider extends AbstractProvider
         return json_decode((string) $response->getBody(), true);
     }
 
-    protected function mapUserToObject(array $user)
+    protected function mapUserToObject(array $user): User|ZaloUser
     {
         return (new ZaloUser())->setRaw($user)->map([
             'id' => $id = $user['id'],
@@ -102,7 +112,7 @@ class ZaloProvider extends AbstractProvider
         ]);
     }
 
-    protected function getTokenFields($code)
+    protected function getTokenFields($code): array
     {
         return array_merge(parent::getTokenFields($code), [
             'app_id' => $this->clientId,
